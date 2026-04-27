@@ -5,8 +5,14 @@ import faiss
 import torch
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
-import ollama
 import os
+
+# Try to import Groq (for cloud deployment)
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
 
 # Page configuration
 st.set_page_config(
@@ -15,7 +21,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# MINIMAL CSS - Only for containers, let Streamlit handle text colors
+# Custom CSS 
 st.markdown("""
     <style>
     /* Only style the custom containers */
@@ -159,8 +165,47 @@ def retrieve_relevant_chunks(query, index, data, tokenizer, model, device, k=5):
     
     return unique_results[:k]
 
-def generate_answer(query, retrieved_chunks, references):
-    """Generate answer using LLM"""
+def generate_answer_groq(query, retrieved_chunks, references, api_key):
+    """Generate answer using Groq API"""
+    context = "\n\n---\n\n".join(retrieved_chunks)
+    
+    prompt = f"""You are a scientific assistant. Answer using ONLY the provided context.
+
+Rules:
+- Start directly with the answer
+- No conversational phrases
+- Keep it concise and factual
+- Use bullet points if multiple points
+- If not found, say: "Not found in the provided papers"
+
+Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+    
+    try:
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1000
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+        
+        return answer + ref_text
+    
+    except Exception as e:
+        return f"Error with Groq API: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+
+def generate_answer_ollama(query, retrieved_chunks, references):
+    """Generate answer using Ollama (local)"""
+    import ollama
+    
     context = "\n\n---\n\n".join(retrieved_chunks)
     
     prompt = f"""You are a scientific assistant. Answer using ONLY the provided context.
@@ -195,9 +240,28 @@ Answer:"""
         return f"Error with Ollama: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
 
 def main():
+    # Check if running on Streamlit Cloud
+    is_cloud = os.environ.get("STREAMLIT_SHARING", False) or os.environ.get("STREAMLIT_CLOUD", False)
+    
+    # Get Groq API key from secrets (cloud) or environment (local test)
+    groq_api_key = None
+    if GROQ_AVAILABLE:
+        try:
+            groq_api_key = st.secrets.get("GROQ_API_KEY")
+        except:
+            groq_api_key = os.environ.get("GROQ_API_KEY")
+    
     # Header
-    st.markdown('<div class="main-header" style="font-size: 3rem; text-align: center;">🧬 TranscriptomeRAG</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header" style="font-size: 3rem; text-align: center;">🧬 SciRAG</div>', unsafe_allow_html=True)
     st.markdown('<div style="text-align: center; color: #666; margin-bottom: 1.8rem;">Retrieval-Augmented Generation for scRNA-seq & ATAC-seq | BioBERT + Gemma</div>', unsafe_allow_html=True)
+    
+    # Show mode indicator
+    if is_cloud and groq_api_key:
+        st.success("🚀 Cloud Mode: Using Groq API (Llama 3.1 70B)")
+    elif is_cloud and not groq_api_key:
+        st.warning("⚠️ Cloud Mode: Groq API key not found. Add it in Streamlit secrets.")
+    else:
+        st.info("💻 Local Mode: Using Ollama (Gemma 2B)")
     
     # Sidebar
     with st.sidebar:
@@ -207,7 +271,7 @@ def main():
         - **Source**: PubMed (free full-text papers)
         - **Documents**: 15 scientific papers
         - **Embedding Model**: BioBERT (768-dim)
-        - **LLM**: Gemma 2B via Ollama
+        - **LLM**: Groq (Llama 3.1) / Ollama (Gemma 2B)
         - **Vector DB**: FAISS (cosine similarity)
         """)
         
@@ -286,8 +350,17 @@ def main():
                         "text": chunk["text"]
                     })
                 
-                with st.spinner("🤖 Generating answer with Gemma..."):
-                    answer = generate_answer(query, retrieved_chunks, references)
+                # Generate answer - choose backend based on environment
+                with st.spinner("🤖 Generating answer..."):
+                    if is_cloud and groq_api_key:
+                        answer = generate_answer_groq(query, retrieved_chunks, references, groq_api_key)
+                    elif is_cloud and not groq_api_key:
+                        answer = "⚠️ Groq API key not found. Please add it in Streamlit secrets (Settings → Secrets).\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+                    else:
+                        try:
+                            answer = generate_answer_ollama(query, retrieved_chunks, references)
+                        except Exception as e:
+                            answer = f"⚠️ Ollama not running. Please install Ollama or use cloud deployment.\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
                 
                 # Display answer
                 st.markdown("### 💡 Answer")

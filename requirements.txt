@@ -6,4 +6,5 @@ ollama>=0.6
 numpy>=1.26
 tqdm>=4.66
 PyMuPDF>=1.23
-sentencepiece>=0.2
+sentencepiece>=0.2groq 
+groq 
