@@ -1,0 +1,9 @@
+streamlit>=1.30
+torch>=2.5.0
+transformers>=4.40
+faiss-cpu>=1.7
+ollama>=0.6
+numpy>=1.26
+tqdm>=4.66
+PyMuPDF>=1.23
+sentencepiece>=0.2

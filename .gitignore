@@ -1,0 +1,10 @@
+rag_env/ 
+papers/ 
+*.pdf 
+__pycache__/ 
+*.pyc 
+.DS_Store 
+.ipynb_checkpoints/ 
+*.log 
+*.docx 
+workflow - Copy.ipynb
