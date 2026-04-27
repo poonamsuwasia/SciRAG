@@ -245,7 +245,7 @@ Answer:"""
                 ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
                 
                 # Add note about which model was used
-                answer = f"*[Using model: {model_name}]*\n\n{answer}"
+                #answer = f"*[Using model: {model_name}]*\n\n{answer}"
                 
                 return answer + ref_text
                 
