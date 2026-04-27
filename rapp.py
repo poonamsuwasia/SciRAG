@@ -96,6 +96,19 @@ if 'trigger_search' not in st.session_state:
 if 'query' not in st.session_state:
     st.session_state.query = ""
 
+# Detect if running on Streamlit Cloud
+def is_streamlit_cloud():
+    """Check if running on Streamlit Cloud"""
+    # Check for common Streamlit Cloud environment variables
+    return (
+        os.environ.get("STREAMLIT_CLOUD") == "true" or
+        os.environ.get("IS_STREAMLIT_CLOUD") == "true" or
+        os.environ.get("STREAMLIT_SHARING") == "true" or
+        # Check if running on share.streamlit.io domain
+        "share.streamlit.io" in os.environ.get("STREAMLIT_BROWSER_ADDRESS", "") or
+        ".streamlit.app" in os.environ.get("STREAMLIT_BROWSER_ADDRESS", "")
+    )
+
 @st.cache_resource
 def load_models():
     """Load BioBERT model and FAISS index"""
@@ -204,7 +217,10 @@ Answer:"""
 
 def generate_answer_ollama(query, retrieved_chunks, references):
     """Generate answer using Ollama (local)"""
-    import ollama
+    try:
+        import ollama
+    except ImportError:
+        return "⚠️ Ollama not installed. Please install ollama or use cloud deployment.\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
     
     context = "\n\n---\n\n".join(retrieved_chunks)
     
@@ -240,26 +256,41 @@ Answer:"""
         return f"Error with Ollama: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
 
 def main():
-    # Check if running on Streamlit Cloud
-    is_cloud = os.environ.get("STREAMLIT_SHARING", False) or os.environ.get("STREAMLIT_CLOUD", False)
+    # Detect if running on Streamlit Cloud
+    cloud_mode = is_streamlit_cloud()
     
     # Get Groq API key from secrets (cloud) or environment (local test)
     groq_api_key = None
+    use_groq = False
+    
     if GROQ_AVAILABLE:
         try:
+            # Try to get from Streamlit secrets
             groq_api_key = st.secrets.get("GROQ_API_KEY")
+            if groq_api_key:
+                use_groq = True
         except:
+            pass
+        
+        # If not in secrets, try environment variable
+        if not groq_api_key:
             groq_api_key = os.environ.get("GROQ_API_KEY")
+            if groq_api_key:
+                use_groq = True
+    
+    # Force use Groq on cloud if available
+    if cloud_mode and not use_groq:
+        st.warning("⚠️ Cloud mode detected but no Groq API key found. Add it in Secrets (Settings → Secrets).")
     
     # Header
-    st.markdown('<div class="main-header" style="font-size: 3rem; text-align: center;">🧬 SciRAG</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size: 3rem; text-align: center;">🧬 SciRAG</div>', unsafe_allow_html=True)
     st.markdown('<div style="text-align: center; color: #666; margin-bottom: 1.8rem;">Retrieval-Augmented Generation for scRNA-seq & ATAC-seq | BioBERT + Gemma</div>', unsafe_allow_html=True)
     
     # Show mode indicator
-    if is_cloud and groq_api_key:
+    if use_groq:
         st.success("🚀 Cloud Mode: Using Groq API (Llama 3.1 70B)")
-    elif is_cloud and not groq_api_key:
-        st.warning("⚠️ Cloud Mode: Groq API key not found. Add it in Streamlit secrets.")
+    elif cloud_mode and not use_groq:
+        st.warning("⚠️ Add Groq API key in Secrets (Settings → Secrets) to enable AI answers.")
     else:
         st.info("💻 Local Mode: Using Ollama (Gemma 2B)")
     
@@ -350,17 +381,15 @@ def main():
                         "text": chunk["text"]
                     })
                 
-                # Generate answer - choose backend based on environment
+                # Generate answer - choose backend
                 with st.spinner("🤖 Generating answer..."):
-                    if is_cloud and groq_api_key:
+                    if use_groq and groq_api_key:
                         answer = generate_answer_groq(query, retrieved_chunks, references, groq_api_key)
-                    elif is_cloud and not groq_api_key:
-                        answer = "⚠️ Groq API key not found. Please add it in Streamlit secrets (Settings → Secrets).\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+                    elif cloud_mode and not use_groq:
+                        answer = "⚠️ **Groq API key required for cloud deployment.**\n\nPlease add your Groq API key in Streamlit Secrets:\n1. Go to your app dashboard\n2. Click 'Manage app' → 'Secrets'\n3. Add: `GROQ_API_KEY = \"your_key_here\"`\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
                     else:
-                        try:
-                            answer = generate_answer_ollama(query, retrieved_chunks, references)
-                        except Exception as e:
-                            answer = f"⚠️ Ollama not running. Please install Ollama or use cloud deployment.\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+                        # Try local Ollama
+                        answer = generate_answer_ollama(query, retrieved_chunks, references)
                 
                 # Display answer
                 st.markdown("### 💡 Answer")
