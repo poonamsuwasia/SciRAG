@@ -184,37 +184,41 @@ def generate_answer_groq(query, retrieved_chunks, references, api_key):
     
     prompt = f"""You are a scientific assistant. Answer using ONLY the provided context.
 
-Rules:
-- Start directly with the answer
-- No conversational phrases
-- Keep it concise and factual
-- Use bullet points if multiple points
-- If not found, say: "Not found in the provided papers"
-
 Context:
 {context}
 
 Question: {query}
+
+Instructions:
+- If the context contains the answer, provide it directly and concisely
+- If the answer is not found, say exactly: "Based on the provided papers, this information was not found."
+- Use bullet points for multiple points
+- Do not add conversational phrases
 
 Answer:"""
     
     try:
         client = Groq(api_key=api_key)
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="mixtral-8x7b-32768",  # More stable model
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=1000
+            max_tokens=500
         )
         
         answer = response.choices[0].message.content.strip()
-        ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+        
+        # If answer is too short or indicates not found
+        if len(answer) < 20 or "not found" in answer.lower():
+            ref_text = "\n\n**Note:** The retrieved passages did not contain relevant information.\n\n**Retrieved from:**\n" + "\n".join([f"- {r}" for r in references])
+        else:
+            ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
         
         return answer + ref_text
     
     except Exception as e:
-        return f"Error with Groq API: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
-
+        return f"⚠️ API Error: {str(e)[:200]}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+    
 def generate_answer_ollama(query, retrieved_chunks, references):
     """Generate answer using Ollama (local)"""
     try:
