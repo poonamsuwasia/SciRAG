@@ -178,6 +178,28 @@ def retrieve_relevant_chunks(query, index, data, tokenizer, model, device, k=5):
     
     return unique_results[:k]
 
+def list_available_models(api_key):
+    """Debug: List all available models for your API key"""
+    import requests
+    
+    url = "https://api.groq.com/openai/v1/models"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if "data" in data:
+            models = [model["id"] for model in data["data"]]
+            return models
+        else:
+            return f"Error: {data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 def generate_answer_groq(query, retrieved_chunks, references, api_key):
     """Generate answer using Groq API"""
     context = "\n\n---\n\n".join(retrieved_chunks)
@@ -190,74 +212,61 @@ Context:
 Question: {query}
 
 Instructions:
-- If the context contains the answer, provide it directly and concisely
-- If the answer is not found, say exactly: "Based on the provided papers, this information was not found."
+- If the context contains the answer, provide it concisely
+- If the answer is not found, say: "Based on the provided papers, this information was not found."
 - Use bullet points for multiple points
-- Do not add conversational phrases
 
 Answer:"""
+    
+    # List of confirmed active models (as of April 2026)
+    active_models = [
+        "llama-3.1-8b-instant",      # ✅ 560 tokens/sec, confirmed active
+        "llama-3.3-70b-versatile",    # ✅ 280 tokens/sec, confirmed active
+        "meta-llama/llama-4-scout-17b-16e-instruct",  # ✅ Preview model
+        "openai/gpt-oss-20b",         # ✅ 1000 tokens/sec
+        "qwen/qwen3-32b",             # ✅ 400 tokens/sec
+    ]
     
     try:
         client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # More stable model
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=500
-        )
         
-        answer = response.choices[0].message.content.strip()
+        # Try each active model until one works
+        last_error = None
+        for model_name in active_models:
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=500
+                )
+                
+                answer = response.choices[0].message.content.strip()
+                ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+                
+                # Add note about which model was used
+                answer = f"*[Using model: {model_name}]*\n\n{answer}"
+                
+                return answer + ref_text
+                
+            except Exception as e:
+                last_error = str(e)
+                continue  # Try next model
         
-        # If answer is too short or indicates not found
-        if len(answer) < 20 or "not found" in answer.lower():
-            ref_text = "\n\n**Note:** The retrieved passages did not contain relevant information.\n\n**Retrieved from:**\n" + "\n".join([f"- {r}" for r in references])
+        # If all models fail, show error and list available models
+        available_models = list_available_models(api_key)
+        error_msg = f"⚠️ All models failed. Last error: {last_error}\n\n"
+        error_msg += f"**Models attempted:** {', '.join(active_models)}\n\n"
+        
+        if isinstance(available_models, list):
+            error_msg += f"**Models available to your API key:**\n{', '.join(available_models)}"
         else:
-            ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+            error_msg += f"**Could not fetch available models:** {available_models}"
         
-        return answer + ref_text
+        return error_msg + "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
     
     except Exception as e:
-        return f"⚠️ API Error: {str(e)[:200]}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
-    
-def generate_answer_ollama(query, retrieved_chunks, references):
-    """Generate answer using Ollama (local)"""
-    try:
-        import ollama
-    except ImportError:
-        return "⚠️ Ollama not installed. Please install ollama or use cloud deployment.\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
-    
-    context = "\n\n---\n\n".join(retrieved_chunks)
-    
-    prompt = f"""You are a scientific assistant. Answer using ONLY the provided context.
-
-Rules:
-- Start directly with the answer
-- No conversational phrases
-- Keep it concise and factual
-- Use bullet points if multiple points
-- If not found, say: "Not found in the provided papers"
-
-Context:
-{context}
-
-Question: {query}
-
-Answer:"""
-    
-    try:
-        response = ollama.chat(
-            model="gemma:2b",
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3}
-        )
-        
-        answer = response["message"]["content"].strip()
-        ref_text = "\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
-        
-        return answer + ref_text
-    
-    except Exception as e:
-        return f"Error with Ollama: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
+        return f"⚠️ API Error: {str(e)}\n\n**References:**\n" + "\n".join([f"- {r}" for r in references])
 
 def main():
     # Detect if running on Streamlit Cloud
