@@ -200,7 +200,7 @@ Answer:"""
     try:
         client = Groq(api_key=api_key)
         response = client.chat.completions.create(
-            model="mixtral-8x7b-32768",  # More stable model
+            model="llama-3.1-8b-instant",  # More stable model
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=500
